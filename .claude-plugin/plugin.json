@@ -1,0 +1,9 @@
+{
+  "name": "video-editor",
+  "version": "1.0.0",
+  "description": "AI-assisted video editing and creation — ffmpeg for editing, Remotion for title cards and teasers, Whisper for captions",
+  "author": {
+    "name": "eldiaploo"
+  },
+  "keywords": ["video", "ffmpeg", "remotion", "editing", "media", "captions", "teaser"]
+}
