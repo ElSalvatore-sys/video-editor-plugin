@@ -34,8 +34,13 @@ Transcribe speech in a video or audio file to an `.srt` subtitle file using Open
    whisper "<file>" --model medium --output_format srt --output_dir "$(dirname '<file>')" [--language <code>]
    ```
    The `medium` model balances speed and accuracy. For long files suggest `--model large` for better quality.
+   Whisper names the output using the input's basename without extension (e.g., `interview.mp4` → `interview.srt`).
+   Construct the expected path as:
+   ```bash
+   SRT_FILE="$(dirname '<file>')/$(basename '<file>' | sed 's/\.[^.]*$//' ).srt"
+   ```
 
-6. Report the output .srt file path.
+6. Report the output .srt file path (`$SRT_FILE`).
 
 7. Offer next step:
    > "Transcription complete. Want me to burn these captions into the video? Run:

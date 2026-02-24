@@ -106,8 +106,8 @@ ffmpeg -i input.mp4 -c:v libx264 -crf 23 -preset medium -c:a aac -b:a 128k compr
 ```bash
 # Two clips with 1s crossfade at offset = duration_of_clip1 - 1
 ffmpeg -i clip1.mp4 -i clip2.mp4 \
-  -filter_complex "xfade=transition=fade:duration=1:offset=<offset>,format=yuv420p" \
-  merged_output.mp4
+  -filter_complex "[0][1]xfade=transition=fade:duration=1:offset=<offset>,format=yuv420p[v]" \
+  -map "[v]" merged_output.mp4
 ```
 
 **Burn .srt captions:**

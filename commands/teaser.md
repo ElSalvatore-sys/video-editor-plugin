@@ -30,6 +30,12 @@ Create a teaser or trailer by combining video clips with an animated Remotion ti
 5. **Build the teaser with Remotion** (multi-sequence composition):
 
    Create a temp Remotion project at `/tmp/remotion-teaser-<timestamp>/`.
+   Copy all clip files into `$RENDER_DIR/public/` so Remotion can serve them:
+   ```bash
+   mkdir -p $RENDER_DIR/public
+   for clip in <clips>; do cp "$clip" "$RENDER_DIR/public/"; done
+   ```
+   Use only the **basename** of each clip in the Remotion composition (Remotion's `staticFile()` resolves relative to `public/`).
    Write `src/Teaser.tsx` combining title + clips in sequence:
 
    ```tsx
@@ -60,7 +66,7 @@ Create a teaser or trailer by combining video clips with an animated Remotion ti
          )}
          {clips.map((clip, i) => (
            <Sequence key={i} from={titleDuration + i * clipDuration} durationInFrames={clipDuration}>
-             <Video src={staticFile(clip)} />
+             <Video src={staticFile(basename(clip))} /> {/* basename only — files copied to public/ */}
            </Sequence>
          ))}
        </AbsoluteFill>
