@@ -1,34 +1,47 @@
-# Video Editor Plugin — Design Document
+# Video Editor Plugin — Design Document (v2)
 
 **Date:** 2026-02-24
-**Status:** Approved
+**Status:** Approved (revised from v1)
 
 ---
 
 ## Overview
 
-A Claude Code plugin that provides AI-assisted video editing via `ffmpeg`. The plugin adds a natural-language skill and four slash commands, letting Claude plan, explain, and execute video transformations on the user's machine.
+A Claude Code plugin that provides AI-assisted video editing and creation. Uses two complementary engines:
+
+- **ffmpeg** — editing existing video footage (trim, compress, merge, transitions, captions, processing)
+- **Remotion** — programmatic video creation from React components (title cards, teasers, animated intros/outros)
 
 ---
 
 ## Architecture
 
-**Type:** Pure skills + commands plugin (no MCP server, no hooks)
-**Runtime dependency:** `ffmpeg` and `ffprobe` (installed via Homebrew or system package manager)
-**Execution model:** Claude generates ffmpeg commands, explains them in plain English, confirms with the user, then executes via the built-in Bash tool.
+**Type:** Skills + commands plugin (no MCP server)
+**Runtime dependencies:**
+- `ffmpeg` + `ffprobe` (via Homebrew: `brew install ffmpeg`)
+- Node.js + npm (for Remotion)
+- Remotion (`npm install remotion @remotion/cli @remotion/player`)
+- `whisper` CLI (optional, for transcription: `pip install openai-whisper`)
+
+**Execution model:** Claude writes and executes shell commands via the built-in Bash tool. For Remotion, Claude scaffolds a minimal project, writes the React composition, and renders it via `npx remotion render`.
 
 ```
 video-editor/
 ├── .claude-plugin/
-│   ├── plugin.json          # plugin manifest
-│   └── marketplace.json     # dev marketplace for local testing
+│   ├── plugin.json
+│   └── marketplace.json
 ├── skills/
-│   └── video-editor.md      # AI-assisted workflow skill
+│   └── video-editor/
+│       └── SKILL.md          # Unified AI workflow for all editing + creation
 ├── commands/
-│   ├── trim.md              # /trim command
-│   ├── compress.md          # /compress command
-│   ├── merge.md             # /merge command
-│   └── extract.md           # /extract command
+│   ├── trim.md               # /trim <file> <start> <end>
+│   ├── compress.md           # /compress <file> <preset|size>
+│   ├── merge.md              # /merge <file1> <file2> [...] [--transition fade]
+│   ├── extract.md            # /extract <file> <audio|subtitles>
+│   ├── transcribe.md         # /transcribe <file>
+│   ├── add-captions.md       # /add-captions <file> <srt-file|auto>
+│   ├── title-card.md         # /title-card "<text>" [--duration 3s]
+│   └── teaser.md             # /teaser <clip1> [clip2 ...] [--title "..."]
 └── README.md
 ```
 
@@ -36,7 +49,40 @@ video-editor/
 
 ## Safety Rule
 
-Every operation saves to a **new output file** by default (e.g. `output_video.mp4`). The source file is never overwritten unless the user explicitly requests it. Before executing, Claude always states what it will do and what the output filename will be.
+Every operation saves to a **new output file**. The source is never overwritten unless explicitly requested. Claude always announces the output filename and confirms before executing.
+
+---
+
+## Engine Responsibilities
+
+### ffmpeg Engine
+
+| Operation | Method |
+|-----------|--------|
+| Trim | `-ss`/`-to` with `-c copy` (lossless) |
+| Compress | `libx264` CRF presets or two-pass for target size |
+| Merge with transitions | `xfade` filter between clips |
+| Extract audio | `-vn -c:a libmp3lame` |
+| Extract subtitles | `-map 0:s:0` |
+| Add captions | `subtitles=` filter or `-vf ass=` |
+| Process (batch) | Shell loop over files |
+
+### Remotion Engine
+
+| Operation | Method |
+|-----------|--------|
+| Title card | Remotion `<Composition>` with `<AbsoluteFill>` + styled text |
+| Teaser/trailer | Multi-`<Sequence>` composition with clips + animated overlays |
+| Animated intro/outro | React animation with spring/interpolate |
+| Lower thirds | Animated text overlay composition |
+
+### Combined Workflows
+
+| Workflow | Steps |
+|----------|-------|
+| Auto-caption video | `/transcribe` → Whisper → .srt → `/add-captions` → ffmpeg |
+| Teaser with title | Remotion renders title card → ffmpeg merges with clips + transitions |
+| Full trailer | Remotion for graphics + ffmpeg for clip selection, trimming, final merge |
 
 ---
 
@@ -44,53 +90,46 @@ Every operation saves to a **new output file** by default (e.g. `output_video.mp
 
 ### Skill: `video-editor`
 
-**Trigger:** Any natural-language video editing request.
+One unified skill handles both editing and creation. Triggered by natural-language video requests.
 
 **Workflow:**
-1. If no input file is mentioned, ask for the file path
-2. Run `ffprobe` to inspect the file (codec, resolution, duration, audio streams)
-3. Reason about the best ffmpeg strategy for the request
-4. Present the ffmpeg command with a plain-English explanation
-5. Confirm with the user before executing
-6. Execute, then report the output file path and new file size
-
-**Example triggers:**
-- "make this smaller for Instagram"
-- "remove the first 10 seconds"
-- "pull out just the audio track"
-- "combine these three clips in order"
-
----
+1. Check tools (ffmpeg, Node.js, whisper)
+2. Understand the goal — editing existing footage or creating new content?
+3. For **editing**: inspect file with ffprobe, build ffmpeg pipeline, confirm, run, report
+4. For **creation**: scaffold Remotion composition, write React code, render, report
+5. For **combined workflows**: orchestrate multi-step pipeline
 
 ### Slash Commands
 
-| Command | Signature | Description |
-|---------|-----------|-------------|
-| `/trim` | `/trim <file> <start> <end>` | Cut clip between two timestamps (HH:MM:SS) |
-| `/compress` | `/compress <file> <preset\|size>` | Re-encode with preset (`web`, `mobile`, `storage`) or target size (`50MB`) |
-| `/merge` | `/merge <file1> <file2> [file3...]` | Concatenate clips in the given order |
-| `/extract` | `/extract <file> <audio\|subtitles>` | Extract audio (mp3/aac) or subtitle track (srt) |
-
-Each command:
-- Validates `ffmpeg` is installed
-- Announces the output filename before running
-- Reports success + file size on completion
+| Command | Usage | Engine |
+|---------|-------|--------|
+| `/trim` | `/trim <file> <start> <end>` | ffmpeg |
+| `/compress` | `/compress <file> <web\|mobile\|storage\|50MB>` | ffmpeg |
+| `/merge` | `/merge file1 file2 [...] [--transition fade\|dissolve\|wipe]` | ffmpeg |
+| `/extract` | `/extract <file> <audio\|subtitles>` | ffmpeg |
+| `/transcribe` | `/transcribe <file>` | Whisper |
+| `/add-captions` | `/add-captions <file> <srt-file\|auto>` | ffmpeg |
+| `/title-card` | `/title-card "<text>" [--bg #000] [--duration 3]` | Remotion |
+| `/teaser` | `/teaser clip1.mp4 [clip2 ...] [--title "My Film"]` | Remotion + ffmpeg |
 
 ---
 
 ## Error Handling
 
-- Missing `ffmpeg`: surface a friendly message with install instructions (`brew install ffmpeg`)
-- File not found: report the path and ask the user to verify
-- ffmpeg error: surface the stderr output so the user can understand what went wrong
-- Codec incompatibility on merge: detect mismatched streams with ffprobe and warn before attempting
+- **ffmpeg not found:** friendly install message (`brew install ffmpeg`)
+- **Node.js not found:** `brew install node` or point to nodejs.org
+- **Whisper not found:** `pip install openai-whisper` — captions still work with manual .srt
+- **Incompatible streams for merge:** ffprobe detects mismatch → warn user → use re-encoding path
+- **Remotion render fails:** surface stderr, suggest checking Node version
+- **File not found:** report path, ask user to verify
 
 ---
 
 ## Out of Scope (v1)
 
-- GUI or interactive timeline
-- Cloud upload or streaming
 - Real-time preview
-- Subtitle generation (transcription)
+- Cloud upload or streaming
+- GUI timeline
 - Color grading / LUTs
+- AI-generated video content (Sora, Runway, etc.)
+- Audio mixing / multi-track
